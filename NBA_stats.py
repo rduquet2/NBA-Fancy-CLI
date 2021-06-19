@@ -1,14 +1,15 @@
 from plumbum import cli
 from pyfiglet import Figlet
 from plumbum.cmd import git
-from questionary import select, text, prompt
+from questionary import select, text
 import requests
-import json
+import time
 
+# all the URLs to access the data
 player_info_url = "https://www.balldontlie.io/api/v1/players"
-
-player_season_stats_response = requests.get("https://www.balldontlie.io/api/v1/season_averages")
-team_info_response = requests.get("https://www.balldontlie.io/api/v1/teams")
+player_season_average_url = "https://www.balldontlie.io/api/v1/season_averages"
+game_day_stats_url = "https://www.balldontlie.io/api/v1/stats"
+game_day_score_url = "https://www.balldontlie.io/api/v1/games" 
 
 def print_welcome(text: str):
     print(Figlet(font='bulbhead').renderText(text))
@@ -18,7 +19,7 @@ def generate_choices():
         "What NBA info would you like to see?",
         choices=[
             "Player attributes (height, weight, etc.)",
-            "Player stats",
+            "Season Averages of a player",
             "Game stats on a specific day"
         ]).ask()
 
@@ -27,24 +28,85 @@ def generate_question_from_choice(choice: str):
     if choice == "Player attributes (height, weight, etc.)":
         nba_player = text("Whose player attributes are you looking for? Enter their first and last name (like LeBron James).").ask()
         print_player_attributes(nba_player)
-    elif choice == "Player stats":
-        answer = text("Whose player stats are you looking for? Enter their first and last name (like LeBron James).").ask()
+    elif choice == "Season Averages of a player":
+        player = text("Which player's season averages are you looking for? Enter their first and last name (like LeBron James).").ask()
+        print_player_season_average(player)
     else:
         date = text("Which game day are you looking for? Type the date as 'YYYY-MM-DD' format.").ask()
+        choice_on_date = select("Which stats are you looking for?", 
+        choices=["A player's stats on that day",
+        "Team scores"
+        ]).ask()
+        get_stats_on_date(date, choice_on_date)
 
 def print_player_attributes(player: str):
     first_name = player.split()[0].strip()
     last_name = player.split()[1].strip()
-    player_info_response = requests.get(player_info_url + "?search=" + last_name + "&per_page=1000")
-    player_info_json = player_info_response.json()
+    player_info_json = get_player_json(last_name)
     for person in player_info_json['data']:
         if person['first_name'] == first_name and person['last_name'] == last_name:
             print_formatted_attributes(person) 
 
-#def print_player_stats(player: str):  
+def print_player_season_average(player: str):
+    season = text("Which season do you want to check the season average of this player?").ask()
+    player_id = get_player_id(player)
+    player_season_averages_response = requests.get(player_season_average_url + "?season=" + str(season) + "&player_ids[]=" + str(player_id))
+    player_season_average_json = player_season_averages_response.json()
+    for season_averages in player_season_average_json['data']:
+        games_played = season_averages['games_played']
+        avg_minutes = season_averages['min']
+        avg_rebounds = season_averages['reb']
+        avg_assists = season_averages['ast']
+        avg_steals = season_averages['stl']
+        avg_blocks = season_averages['blk']
+        avg_turnovers = season_averages['turnover']
+        avg_points = season_averages['pts']
+    print("In the " + season + " season, " + player + "'s season averages were:\n" + "Games played: " + str(games_played) + "\nMinutes: " + avg_minutes + 
+    "\nRebounds: " + str(avg_rebounds) + "\nAssists: " + str(avg_assists) + "\nSteals: " + str(avg_steals) + "\nBlocks: " + str(avg_blocks) + 
+    "\nTurnovers: " + str(avg_turnovers) + "\nPoints: " + str(avg_points))    
 
-#def print_team_infor(team: str):
+def get_stats_on_date(selected_date, selected_topic: str):
+    if selected_topic == "A player's stats on that day":
+        selected_player = text("Which player are you looking to get stats for on that date? Enter their first and last name (like LeBron James).").ask()
+        first_name = selected_player.split()[0].strip()
+        last_name = selected_player.split()[1].strip()
+        player_id = get_player_id(selected_player)
+        game_day_player_stats_response = requests.get(game_day_stats_url + "?dates[]=" + selected_date + "&player_ids[]=" + str(player_id))
+        game_day_player_stats_json = game_day_player_stats_response.json()
+        print("Fetching " + first_name + " " + last_name + "\'s stats on " + selected_date + "...")
+        time.sleep(2)
+        for stats in game_day_player_stats_json['data']:
+            assists = stats['ast']
+            blocks = stats['blk']
+            minutes = stats['min']
+            points = stats['pts']
+            rebounds = stats['reb']
+            steals = stats['stl']
+        print("Okay, here's what I found:\n" + "Minutes: " + minutes + "\nPoints: " + str(points) + "\nAssists: " + 
+            str(assists) + "\nBlocks: " + str(blocks) + "\nRebounds: " + str(rebounds) + "\nSteals: " + str(steals))    
+    elif selected_topic == "Team scores":
+        selected_team = text("Which team are you looking to get the stats of? Enter the team's full name (such as Golden State Warriors).").ask()
+        curr_page = 1
+        # I used a for loop here to search through the pages of the games on that date, 
+        # but this for loop could be more useful for searching for a specific player or team in a longer list
+        game_day_page_response = requests.get(game_day_score_url + "?dates[]=" + selected_date)
+        game_day_page_json = game_day_page_response.json()
+        total_pages = game_day_page_json['meta']['total_pages']
+        while curr_page <= total_pages:
+            game_day_score_response = requests.get(game_day_score_url + "?dates[]=" + selected_date + "&page=" + str(curr_page))
+            game_day_score_json = game_day_score_response.json()
+            for team in game_day_score_json['data']:
+                if team['home_team']['full_name'] == selected_team or team['visitor_team']['full_name'] == selected_team:
+                    print("Fetching the score from that game...")
+                    time.sleep(2)
+                    print("In the " + str(team['season']) + " season, the home team, the " + 
+                    team['home_team']['full_name'] + ", scored " + str(team['home_team_score']) + 
+                    " and the visiting team, the " + team['visitor_team']['full_name'] + ", scored " + str(team['visitor_team_score']) + ".")
+                    break                  
+                else:
+                    curr_page += 1
 
+# Helper methods                    
 def print_formatted_attributes(obj):
     # create a formatted string of the Python JSON object displaying the players characteristics
     name = obj['last_name'] + ", " + obj['first_name']
@@ -61,6 +123,18 @@ def print_formatted_attributes(obj):
     division = obj['team']['division']
     print("Name: " + name + "\nPosition: " + position + "\nHeight: " + height + "\nTeam: " + team + "\nConference: " + conference + "\nDivision: " + division)
 
+def get_player_json(last_name: str):
+    player_info_response = requests.get(player_info_url + "?search=" + last_name + "&per_page=100")
+    return player_info_response.json()
+
+def get_player_id(name: str):
+    first_name = name.split()[0].strip()
+    last_name = name.split()[1].strip()
+    player_info_json = get_player_json(last_name)
+    for person in player_info_json['data']:
+        if person['first_name'] == first_name and person['last_name'] == last_name:
+            return person['id']   
+
 class GetNBAInformation(cli.Application):
     VERSION = "1.0"
     def main(self):
@@ -68,8 +142,7 @@ class GetNBAInformation(cli.Application):
         choice = generate_choices()
         generate_question_from_choice(choice)
         
-
 if __name__ == "__main__":
     GetNBAInformation()
 
-### TESTS    
+### TESTS 
