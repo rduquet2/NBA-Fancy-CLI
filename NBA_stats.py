@@ -1,9 +1,12 @@
 from plumbum import cli
 from pyfiglet import Figlet
-from plumbum.cmd import git
 from questionary import select, text
+from win32com.client import GetObject
 import requests
 import time
+import io
+import os
+import sys
 
 # all the URLs to access the data
 player_info_url = "https://www.balldontlie.io/api/v1/players"
@@ -24,13 +27,13 @@ def generate_choices():
         ]).ask()
 
 def generate_question_from_choice(choice: str):
-    print(choice)
     if choice == "Player attributes (height, weight, etc.)":
         nba_player = text("Whose player attributes are you looking for? Enter their first and last name (like LeBron James).").ask()
         print_player_attributes(nba_player)
     elif choice == "Season Averages of a player":
         player = text("Which player's season averages are you looking for? Enter their first and last name (like LeBron James).").ask()
-        print_player_season_average(player)
+        season = text("Which season do you want to check the season average of this player?").ask()
+        print_player_season_average(player, season)
     else:
         date = text("Which game day are you looking for? Type the date as 'YYYY-MM-DD' format.").ask()
         choice_on_date = select("Which stats are you looking for?", 
@@ -47,8 +50,7 @@ def print_player_attributes(player: str):
         if person['first_name'] == first_name and person['last_name'] == last_name:
             print_formatted_attributes(person) 
 
-def print_player_season_average(player: str):
-    season = text("Which season do you want to check the season average of this player?").ask()
+def print_player_season_average(player, season: str):
     player_id = get_player_id(player)
     player_season_averages_response = requests.get(player_season_average_url + "?season=" + str(season) + "&player_ids[]=" + str(player_id))
     player_season_average_json = player_season_averages_response.json()
@@ -137,7 +139,16 @@ def get_player_id(name: str):
 
 class GetNBAInformation(cli.Application):
     VERSION = "1.0"
+    leave = cli.Flag(['e', 'exit'], help="Exits command prompt")
     def main(self):
+        if self.leave:
+            # kills command prompt through windows management instrumentation
+            WMI = GetObject('winmgmts:')
+            processes = WMI.InstancesOf('Win32_Process')
+
+            for p in WMI.ExecQuery('select * from Win32_Process where Name="cmd.exe"'):
+                print("Killing PID:", p.Properties_('ProcessId').Value)
+                os.system("taskkill /pid "+str(p.Properties_('ProcessId').Value))
         print_welcome("Welcome to NBA stat finder!")
         choice = generate_choices()
         generate_question_from_choice(choice)
@@ -146,3 +157,22 @@ if __name__ == "__main__":
     GetNBAInformation()
 
 ### TESTS 
+
+def test_print_player_attributes():
+    # capture output and restore output stream to what it was before the capture
+    captured_output = io.StringIO()
+    sys.stdout = captured_output
+    print_player_attributes("LeBron James")
+    sys.stdout = sys.__stdout__
+    assert captured_output.getvalue() == 'Name: James, LeBron\nPosition: F\nHeight: 6\'8\"\nTeam: Los Angeles Lakers (LAL)\nConference: West\nDivision: Pacific\n'
+
+def test_print_player_season_average():
+    captured_output = io.StringIO()
+    sys.stdout = captured_output
+    print_player_season_average("Stephen Curry", "2016")
+    sys.stdout = sys.__stdout__
+    assert captured_output.getvalue() == 'In the 2016 season, Stephen Curry\'s season averages were:\nGames played: 79\nMinutes: 33:23\nRebounds: 4.47\nAssists: 6.63\nSteals: 1.8\nBlocks: 0.22\nTurnovers: 3.03\nPoints: 25.3\n'
+
+def test_get_player_id():
+    player_id = get_player_id("Klay Thompson")
+    assert player_id == 443
